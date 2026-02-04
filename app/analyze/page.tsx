@@ -1,0 +1,195 @@
+"use client"
+
+import { useState } from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { Activity, ArrowLeft } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { VideoUpload } from "@/components/pitch/VideoUpload"
+import { PersonaSelector, type Persona } from "@/components/pitch/PersonaSelector"
+import { AnalyzeButton } from "@/components/pitch/AnalyzeButton"
+
+export default function AnalyzePage() {
+  const router = useRouter()
+  const [file, setFile] = useState<File | null>(null)
+  const [textInput, setTextInput] = useState("")
+  const [persona, setPersona] = useState<Persona>("angel")
+  const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState("")
+
+  const handleClear = () => {
+    setFile(null)
+    setTextInput("")
+  }
+
+  const handleAnalyze = async () => {
+    if (!file && !textInput) return
+
+    setLoading(true)
+
+    try {
+      let transcription: { text: string; words: Array<{ text: string; start: number; end: number }> }
+
+      if (textInput) {
+        // Use text input directly - create synthetic word timestamps
+        setProgress("Processing text...")
+        const words = textInput.split(/\s+/).filter(Boolean)
+        const wordsPerSecond = 2.5 // Average speaking rate
+        transcription = {
+          text: textInput,
+          words: words.map((word, i) => ({
+            text: word,
+            start: Math.floor(i / wordsPerSecond) * 1000,
+            end: Math.floor((i + 1) / wordsPerSecond) * 1000,
+          })),
+        }
+      } else if (file) {
+        // Transcribe audio/video file
+        setProgress("Uploading and transcribing...")
+        const formData = new FormData()
+        formData.append("file", file)
+
+        const transcribeRes = await fetch("/api/transcribe", {
+          method: "POST",
+          body: formData,
+        })
+
+        if (!transcribeRes.ok) {
+          throw new Error("Transcription failed")
+        }
+
+        transcription = await transcribeRes.json()
+      } else {
+        throw new Error("No input provided")
+      }
+
+      setProgress("Analyzing engagement...")
+
+      // Step 2: Analyze
+      const analyzeRes = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: transcription,
+          persona,
+        }),
+      })
+
+      if (!analyzeRes.ok) {
+        throw new Error("Analysis failed")
+      }
+
+      const analysis = await analyzeRes.json()
+      setProgress("Generating suggestions...")
+
+      // Step 3: Get suggestions for weak moments
+      const weakChunks = analysis.chunks.filter((c: { weakMoment: boolean }) => c.weakMoment)
+      
+      let suggestions: Array<{
+        chunkIndex: number
+        rewrite: string
+        slideTip: string
+        coachingTip: string
+      }> = []
+      
+      if (weakChunks.length > 0) {
+        const suggestRes = await fetch("/api/suggest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            weakChunks,
+            persona,
+          }),
+        })
+
+        if (suggestRes.ok) {
+          suggestions = await suggestRes.json()
+        }
+      }
+
+      // Store results and navigate
+      const results = {
+        transcript: transcription,
+        analysis,
+        suggestions,
+        persona,
+        inputType: textInput ? "text" : "media",
+      }
+      sessionStorage.setItem("pitchResults", JSON.stringify(results))
+      router.push("/result")
+    } catch (error) {
+      console.error("Analysis error:", error)
+      alert("Failed to analyze pitch. Please try again.")
+    } finally {
+      setLoading(false)
+      setProgress("")
+    }
+  }
+
+  const hasInput = !!file || !!textInput
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <header className="border-b border-border">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-6 py-4">
+          <Link href="/" className="flex items-center gap-2">
+            <Activity className="h-6 w-6 text-primary" />
+            <span className="text-xl font-semibold text-foreground">PitchPulse</span>
+          </Link>
+          <Link href="/">
+            <Button variant="ghost" className="gap-2">
+              <ArrowLeft className="h-4 w-4" />
+              Back
+            </Button>
+          </Link>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="mx-auto max-w-4xl px-6 py-12">
+        <h1 className="text-3xl font-bold text-foreground">Analyze Your Pitch</h1>
+        <p className="mt-2 text-muted-foreground">
+          Upload a video, record audio, or paste your pitch transcript. Then select your target investor persona.
+        </p>
+
+        {/* Upload Section */}
+        <div className="mt-10">
+          <h2 className="text-lg font-semibold text-foreground">1. Add Your Pitch</h2>
+          <div className="mt-4">
+            <VideoUpload
+              onFileSelect={setFile}
+              onTextSelect={setTextInput}
+              selectedFile={file}
+              selectedText={textInput}
+              onClear={handleClear}
+            />
+          </div>
+        </div>
+
+        {/* Persona Selection */}
+        <div className="mt-10">
+          <h2 className="text-lg font-semibold text-foreground">2. Choose Investor Persona</h2>
+          <div className="mt-4">
+            <PersonaSelector selected={persona} onSelect={setPersona} />
+          </div>
+        </div>
+
+        {/* Analyze Button */}
+        <div className="mt-10">
+          <h2 className="text-lg font-semibold text-foreground">3. Start Analysis</h2>
+          <div className="mt-4">
+            <AnalyzeButton
+              onClick={handleAnalyze}
+              disabled={!hasInput}
+              loading={loading}
+            />
+            {progress && (
+              <p className="mt-4 text-center text-sm text-muted-foreground">{progress}</p>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  )
+}
