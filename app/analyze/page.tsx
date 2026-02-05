@@ -46,12 +46,24 @@ export default function AnalyzePage() {
       } else if (file) {
         // Transcribe audio/video file
         setProgress("Uploading and transcribing...")
-        const formData = new FormData()
-        formData.append("file", file)
+        
+        // Convert file to base64
+        const arrayBuffer = await file.arrayBuffer()
+        const bytes = new Uint8Array(arrayBuffer)
+        let binary = ""
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i])
+        }
+        const audioData = btoa(binary)
 
         const transcribeRes = await fetch("/api/transcribe", {
           method: "POST",
-          body: formData,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            audioData,
+            fileName: file.name,
+            fileType: file.type,
+          }),
         })
 
         if (!transcribeRes.ok) {
@@ -107,11 +119,59 @@ export default function AnalyzePage() {
         }
       }
 
+      // Step 4: Voice analysis (tonality & rhythm)
+      setProgress("Analyzing voice delivery...")
+      let voiceAnalysis = null
+      
+      try {
+        const voiceRes = await fetch("/api/voice-analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            words: transcription.words,
+          }),
+        })
+        
+        if (voiceRes.ok) {
+          voiceAnalysis = await voiceRes.json()
+        }
+      } catch (err) {
+        console.error("Voice analysis error:", err)
+      }
+
+      // Step 5: Video analysis (only for video files)
+      let videoFeedback: Array<{ time: string; issue: string; advice: string }> = []
+      
+      if (file && (file.type.startsWith("video/") || file.name.match(/\.(mp4|webm|mov|avi)$/i))) {
+        setProgress("Analyzing body language...")
+        try {
+          // Estimate video duration from transcript
+          const lastWord = transcription.words[transcription.words.length - 1]
+          const durationSeconds = lastWord ? Math.ceil(lastWord.end / 1000) : 60
+          
+          const videoRes = await fetch("/api/video-analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              durationSeconds,
+            }),
+          })
+          
+          if (videoRes.ok) {
+            videoFeedback = await videoRes.json()
+          }
+        } catch (err) {
+          console.error("Video analysis error:", err)
+        }
+      }
+
       // Store results and navigate
       const results = {
         transcript: transcription,
         analysis,
         suggestions,
+        voiceAnalysis,
+        videoFeedback,
         persona,
         inputType: textInput ? "text" : "media",
       }
