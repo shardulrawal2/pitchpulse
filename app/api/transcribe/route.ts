@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '50mb',
+    },
+  },
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Parse JSON body with base64 audio data
     const body = await request.json()
-    const { audioData, fileName, fileType } = body
-
-    if (!audioData) {
-      return NextResponse.json({ error: "No audio data provided" }, { status: 400 })
-    }
+    const { audioData, audioUrl: providedAudioUrl } = body
 
     const apiKey = process.env.ASSEMBLYAI_API_KEY
 
@@ -17,35 +21,46 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(getMockTranscription())
     }
 
-    // Decode base64 to binary using Buffer (works in Node.js runtime)
-    const buffer = Buffer.from(audioData, "base64")
+    let audioUrl = providedAudioUrl
 
-    // Step 1: Upload the audio file to AssemblyAI using a Blob
-    console.log("[v0] Uploading file to AssemblyAI, size:", buffer.length, "bytes")
-    
-    // Create a Blob from the buffer for fetch compatibility
-    const blob = new Blob([buffer])
-    
-    const uploadResponse = await fetch("https://api.assemblyai.com/v2/upload", {
-      method: "POST",
-      headers: {
-        authorization: apiKey,
-        "content-type": "application/octet-stream",
-      },
-      body: blob,
-    })
+    // If audioData provided, upload to AssemblyAI
+    if (audioData && !audioUrl) {
+      // Decode base64 to Buffer (Node.js compatible)
+      const buffer = Buffer.from(audioData, "base64")
 
-    if (!uploadResponse.ok) {
-      const errorText = await uploadResponse.text()
-      console.error("[v0] Upload failed:", errorText)
-      throw new Error(`Upload failed: ${uploadResponse.status}`)
+      console.log("[v0] Uploading file to AssemblyAI, size:", buffer.length, "bytes")
+      
+      // Convert to ArrayBuffer for fetch compatibility
+      const arrayBuffer = buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength
+      )
+      
+      const uploadResponse = await fetch("https://api.assemblyai.com/v2/upload", {
+        method: "POST",
+        headers: {
+          authorization: apiKey,
+          "content-type": "application/octet-stream",
+        },
+        body: arrayBuffer,
+      })
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text()
+        console.error("[v0] Upload failed:", errorText)
+        throw new Error(`Upload failed: ${uploadResponse.status}`)
+      }
+
+      const uploadResult = await uploadResponse.json()
+      audioUrl = uploadResult.upload_url
+      console.log("[v0] File uploaded, URL:", audioUrl)
     }
 
-    const uploadResult = await uploadResponse.json()
-    const audioUrl = uploadResult.upload_url
-    console.log("[v0] File uploaded, URL:", audioUrl)
+    if (!audioUrl) {
+      throw new Error("No audio data or URL provided")
+    }
 
-    // Step 2: Request transcription
+    // Request transcription
     console.log("[v0] Requesting transcription...")
     const transcriptResponse = await fetch("https://api.assemblyai.com/v2/transcript", {
       method: "POST",
@@ -69,18 +84,16 @@ export async function POST(request: NextRequest) {
     const transcriptId = transcriptResult.id
     console.log("[v0] Transcription started, ID:", transcriptId)
 
-    // Step 3: Poll for completion
+    // Poll for completion
     let transcript = transcriptResult
     let attempts = 0
-    const maxAttempts = 60 // 5 minutes max (5 sec intervals)
+    const maxAttempts = 60
 
     while (transcript.status !== "completed" && transcript.status !== "error" && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
+      await new Promise(resolve => setTimeout(resolve, 5000))
       
       const pollResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-        headers: {
-          authorization: apiKey,
-        },
+        headers: { authorization: apiKey },
       })
 
       if (!pollResponse.ok) {
@@ -93,7 +106,6 @@ export async function POST(request: NextRequest) {
     }
 
     if (transcript.status === "error") {
-      console.error("[v0] Transcription error:", transcript.error)
       throw new Error(transcript.error || "Transcription failed")
     }
 
@@ -103,21 +115,17 @@ export async function POST(request: NextRequest) {
 
     console.log("[v0] Transcription completed!")
 
-    // Format response
     const words = transcript.words || []
-    const response = {
+    return NextResponse.json({
       text: transcript.text || "",
       words: words.map((w: { text: string; start: number; end: number }) => ({
         text: w.text,
         start: w.start,
         end: w.end,
       })),
-    }
-
-    return NextResponse.json(response)
+    })
   } catch (error) {
     console.error("Transcription error:", error)
-    // Return mock data on error for demo purposes
     console.log("[v0] Falling back to mock transcription due to error")
     return NextResponse.json(getMockTranscription())
   }
@@ -136,11 +144,10 @@ We've built a world-class team with experience from Google, Meta, and top startu
 
 We're raising 5 million dollars to expand our sales team and accelerate product development. Join us in revolutionizing how teams work.`
 
-  const words = []
+  const words: Array<{ text: string; start: number; end: number }> = []
   let currentTime = 0
-  const wordsArray = text.split(/\s+/)
 
-  for (const word of wordsArray) {
+  for (const word of text.split(/\s+/)) {
     const duration = Math.random() * 300 + 200
     words.push({
       text: word,

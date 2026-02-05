@@ -1,6 +1,9 @@
+"use client"
+
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Activity, Mic, Upload, Zap, Target, TrendingUp } from "lucide-react"
+import { Activity, Mic, Upload, Zap, Target, TrendingUp, History } from "lucide-react"
+import { PitchHistory } from "@/components/pitch/PitchHistory"
 
 export default function HomePage() {
   return (
@@ -68,6 +71,25 @@ export default function HomePage() {
             <p className="mt-2 text-sm text-muted-foreground">
               Get rewrites, slide tips, and coaching advice for weak moments in your pitch.
             </p>
+          </div>
+        </div>
+
+        {/* Recent Pitches */}
+        <div className="mt-24">
+          <div className="flex items-center justify-between">
+            <h2 className="text-3xl font-bold text-foreground">Recent Pitches</h2>
+            <Link href="/history">
+              <Button variant="ghost" className="gap-2 bg-transparent">
+                <History className="h-4 w-4" />
+                View All
+              </Button>
+            </Link>
+          </div>
+          <p className="mt-2 text-muted-foreground">
+            Your recent pitch analyses. Click to view details.
+          </p>
+          <div className="mt-6">
+            <PitchHistory maxItems={3} showClearAll={false} />
           </div>
         </div>
 

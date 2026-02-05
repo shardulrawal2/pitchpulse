@@ -3,11 +3,12 @@
 import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { Activity, ArrowLeft } from "lucide-react"
+import { Activity, ArrowLeft, History } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { VideoUpload } from "@/components/pitch/VideoUpload"
 import { PersonaSelector, type Persona } from "@/components/pitch/PersonaSelector"
 import { AnalyzeButton } from "@/components/pitch/AnalyzeButton"
+import { savePitchToHistory } from "@/lib/pitch-history"
 
 export default function AnalyzePage() {
   const router = useRouter()
@@ -45,16 +46,31 @@ export default function AnalyzePage() {
         }
       } else if (file) {
         // Transcribe audio/video file
-        setProgress("Uploading and transcribing...")
+        const fileSizeMB = file.size / (1024 * 1024)
         
-        // Convert file to base64
-        const arrayBuffer = await file.arrayBuffer()
-        const bytes = new Uint8Array(arrayBuffer)
-        let binary = ""
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i])
+        // Check file size - warn if over 25MB
+        if (fileSizeMB > 25) {
+          const proceed = confirm(`This file is ${fileSizeMB.toFixed(1)}MB. Large files may take longer to process. Continue?`)
+          if (!proceed) {
+            setLoading(false)
+            return
+          }
         }
-        const audioData = btoa(binary)
+        
+        setProgress(`Uploading and transcribing (${fileSizeMB.toFixed(1)}MB)...`)
+        
+        // Convert file to base64 using FileReader (handles large files properly)
+        const audioData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const result = reader.result as string
+            // Remove the data URL prefix (e.g., "data:audio/webm;base64,")
+            const base64 = result.split(",")[1]
+            resolve(base64)
+          }
+          reader.onerror = reject
+          reader.readAsDataURL(file)
+        })
 
         const transcribeRes = await fetch("/api/transcribe", {
           method: "POST",
@@ -175,6 +191,10 @@ export default function AnalyzePage() {
         persona,
         inputType: textInput ? "text" : "media",
       }
+      
+      // Save to history
+      savePitchToHistory(results)
+      
       sessionStorage.setItem("pitchResults", JSON.stringify(results))
       router.push("/result")
     } catch (error) {
@@ -197,8 +217,14 @@ export default function AnalyzePage() {
             <Activity className="h-6 w-6 text-primary" />
             <span className="text-xl font-semibold text-foreground">PitchPulse</span>
           </Link>
+          <Link href="/history">
+            <Button variant="ghost" className="gap-2 bg-transparent">
+              <History className="h-4 w-4" />
+              History
+            </Button>
+          </Link>
           <Link href="/">
-            <Button variant="ghost" className="gap-2">
+            <Button variant="ghost" className="gap-2 bg-transparent">
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
