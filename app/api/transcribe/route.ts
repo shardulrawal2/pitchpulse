@@ -1,13 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
 
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '50mb', // Vercel's limit
-    },
-  },
-}
-
 export async function POST(request: NextRequest) {
   try {
     // Parse JSON body with base64 audio data
