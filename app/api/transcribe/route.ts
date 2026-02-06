@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
   try {
     // Parse JSON body with base64 audio data
     const body = await request.json()
-    const { audioData, audioUrl: providedAudioUrl } = body
+    const { audioData, audioUrl: providedAudioUrl, fileType } = body
 
     const apiKey = process.env.DEEPGRAM_API_KEY
 
@@ -23,77 +23,88 @@ export async function POST(request: NextRequest) {
 
     let audioUrl = providedAudioUrl
 
-    // If audioData provided, upload to Deepgram
+    // If audioData provided, transcribe directly without upload
     if (audioData && !audioUrl) {
-      // Decode base64 to Buffer (Node.js compatible)
-      const buffer = Buffer.from(audioData, "base64")
+      // Remove data URL prefix if present (e.g., "data:audio/webm;base64,")
+      const base64Data = audioData.includes(',') ? audioData.split(',')[1] : audioData
+      
+      // Decode base64 to Buffer
+      const buffer = Buffer.from(base64Data, "base64")
 
-      console.log("[v0] Uploading file to Deepgram, size:", buffer.length, "bytes")
+      console.log("[v0] Transcribing audio directly, size:", buffer.length, "bytes")
       
-      // Convert to ArrayBuffer for fetch compatibility
-      const arrayBuffer = buffer.buffer.slice(
-        buffer.byteOffset,
-        buffer.byteOffset + buffer.byteLength
-      )
-      
-      const uploadResponse = await fetch("https://api.deepgram.com/v1/upload", {
+      // Send audio directly to Deepgram for transcription
+      const contentType = fileType || 'audio/webm'
+      const transcriptResponse = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&utterances=true`, {
         method: "POST",
         headers: {
           Authorization: `Token ${apiKey}`,
-          "Content-Type": "audio/webm",
+          "Content-Type": contentType,
         },
-        body: arrayBuffer,
+        body: buffer,
       })
 
-      if (!uploadResponse.ok) {
-        const errorText = await uploadResponse.text()
-        console.error("[v0] Upload failed:", errorText)
-        throw new Error(`Upload failed: ${uploadResponse.status}`)
+      if (!transcriptResponse.ok) {
+        const errorText = await transcriptResponse.text()
+        console.error("[v0] Transcription failed:", errorText)
+        throw new Error(`Transcription failed: ${transcriptResponse.status}`)
       }
 
-      const uploadResult = await uploadResponse.json()
-      audioUrl = uploadResult.s3_url
-      console.log("[v0] File uploaded, URL:", audioUrl)
+      const transcriptResult = await transcriptResponse.json()
+      console.log("[v0] Transcription completed!")
+
+      // Deepgram returns results directly
+      const words = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.words || []
+      const text = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || ""
+
+      return NextResponse.json({
+        text,
+        words: words.map((w: { word: string; start: number; end: number }) => ({
+          text: w.word,
+          start: w.start,
+          end: w.end,
+        })),
+      })
     }
 
-    if (!audioUrl) {
-      throw new Error("No audio data or URL provided")
+    // If audioUrl provided, transcribe from URL
+    if (audioUrl) {
+      console.log("[v0] Transcribing from URL:", audioUrl)
+      
+      const transcriptResponse = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&utterances=true`, {
+        method: "POST",
+        headers: {
+          Authorization: `Token ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: audioUrl,
+        }),
+      })
+
+      if (!transcriptResponse.ok) {
+        const errorText = await transcriptResponse.text()
+        console.error("[v0] Transcription failed:", errorText)
+        throw new Error(`Transcription failed: ${transcriptResponse.status}`)
+      }
+
+      const transcriptResult = await transcriptResponse.json()
+      console.log("[v0] Transcription completed!")
+
+      const words = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.words || []
+      const text = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || ""
+
+      return NextResponse.json({
+        text,
+        words: words.map((w: { word: string; start: number; end: number }) => ({
+          text: w.word,
+          start: w.start,
+          end: w.end,
+        })),
+      })
     }
 
-    // Request transcription
-    console.log("[v0] Requesting transcription...")
-    const transcriptResponse = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&utterances=true`, {
-      method: "POST",
-      headers: {
-        Authorization: `Token ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        url: audioUrl,
-      }),
-    })
-
-    if (!transcriptResponse.ok) {
-      const errorText = await transcriptResponse.text()
-      console.error("[v0] Transcription request failed:", errorText)
-      throw new Error(`Transcription request failed: ${transcriptResponse.status}`)
-    }
-
-    const transcriptResult = await transcriptResponse.json()
-    console.log("[v0] Transcription completed!")
-
-    // Deepgram returns results directly, no polling needed
-    const words = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.words || []
-    const text = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || ""
-
-    return NextResponse.json({
-      text,
-      words: words.map((w: { word: string; start: number; end: number }) => ({
-        text: w.word,
-        start: w.start,
-        end: w.end,
-      })),
-    })
+    throw new Error("No audio data or URL provided")
   } catch (error) {
     console.error("Transcription error:", error)
     console.log("[v0] Falling back to mock transcription due to error")
