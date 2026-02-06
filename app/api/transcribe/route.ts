@@ -14,21 +14,21 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { audioData, audioUrl: providedAudioUrl } = body
 
-    const apiKey = process.env.ASSEMBLYAI_API_KEY
+    const apiKey = process.env.DEEPGRAM_API_KEY
 
     if (!apiKey) {
-      console.log("[v0] No ASSEMBLYAI_API_KEY found, returning mock transcription")
+      console.log("[v0] No DEEPGRAM_API_KEY found, returning mock transcription")
       return NextResponse.json(getMockTranscription())
     }
 
     let audioUrl = providedAudioUrl
 
-    // If audioData provided, upload to AssemblyAI
+    // If audioData provided, upload to Deepgram
     if (audioData && !audioUrl) {
       // Decode base64 to Buffer (Node.js compatible)
       const buffer = Buffer.from(audioData, "base64")
 
-      console.log("[v0] Uploading file to AssemblyAI, size:", buffer.length, "bytes")
+      console.log("[v0] Uploading file to Deepgram, size:", buffer.length, "bytes")
       
       // Convert to ArrayBuffer for fetch compatibility
       const arrayBuffer = buffer.buffer.slice(
@@ -36,11 +36,11 @@ export async function POST(request: NextRequest) {
         buffer.byteOffset + buffer.byteLength
       )
       
-      const uploadResponse = await fetch("https://api.assemblyai.com/v2/upload", {
+      const uploadResponse = await fetch("https://api.deepgram.com/v1/upload", {
         method: "POST",
         headers: {
-          authorization: apiKey,
-          "content-type": "application/octet-stream",
+          Authorization: `Token ${apiKey}`,
+          "Content-Type": "audio/webm",
         },
         body: arrayBuffer,
       })
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       }
 
       const uploadResult = await uploadResponse.json()
-      audioUrl = uploadResult.upload_url
+      audioUrl = uploadResult.s3_url
       console.log("[v0] File uploaded, URL:", audioUrl)
     }
 
@@ -62,15 +62,14 @@ export async function POST(request: NextRequest) {
 
     // Request transcription
     console.log("[v0] Requesting transcription...")
-    const transcriptResponse = await fetch("https://api.assemblyai.com/v2/transcript", {
+    const transcriptResponse = await fetch(`https://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&utterances=true`, {
       method: "POST",
       headers: {
-        authorization: apiKey,
-        "content-type": "application/json",
+        Authorization: `Token ${apiKey}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        audio_url: audioUrl,
-        speech_models: ["universal-2"],
+        url: audioUrl,
       }),
     })
 
@@ -81,45 +80,16 @@ export async function POST(request: NextRequest) {
     }
 
     const transcriptResult = await transcriptResponse.json()
-    const transcriptId = transcriptResult.id
-    console.log("[v0] Transcription started, ID:", transcriptId)
-
-    // Poll for completion
-    let transcript = transcriptResult
-    let attempts = 0
-    const maxAttempts = 60
-
-    while (transcript.status !== "completed" && transcript.status !== "error" && attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000))
-      
-      const pollResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-        headers: { authorization: apiKey },
-      })
-
-      if (!pollResponse.ok) {
-        throw new Error(`Polling failed: ${pollResponse.status}`)
-      }
-
-      transcript = await pollResponse.json()
-      console.log("[v0] Transcription status:", transcript.status)
-      attempts++
-    }
-
-    if (transcript.status === "error") {
-      throw new Error(transcript.error || "Transcription failed")
-    }
-
-    if (transcript.status !== "completed") {
-      throw new Error("Transcription timed out")
-    }
-
     console.log("[v0] Transcription completed!")
 
-    const words = transcript.words || []
+    // Deepgram returns results directly, no polling needed
+    const words = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.words || []
+    const text = transcriptResult.results?.channels?.[0]?.alternatives?.[0]?.transcript || ""
+
     return NextResponse.json({
-      text: transcript.text || "",
-      words: words.map((w: { text: string; start: number; end: number }) => ({
-        text: w.text,
+      text,
+      words: words.map((w: { word: string; start: number; end: number }) => ({
+        text: w.word,
         start: w.start,
         end: w.end,
       })),
