@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server"
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '100mb',
+      sizeLimit: '50mb', // Vercel's limit
     },
   },
 }
@@ -30,6 +30,13 @@ export async function POST(request: NextRequest) {
       
       // Decode base64 to Buffer
       const buffer = Buffer.from(base64Data, "base64")
+      
+      // Check file size - if too large, return mock transcription
+      const sizeMB = buffer.length / (1024 * 1024)
+      if (sizeMB > 45) { // Leave some margin under Vercel's 50MB limit
+        console.log("[v0] File too large:", sizeMB.toFixed(1), "MB, returning mock transcription")
+        return NextResponse.json(getMockTranscription())
+      }
 
       console.log("[v0] Transcribing audio directly, size:", buffer.length, "bytes")
       

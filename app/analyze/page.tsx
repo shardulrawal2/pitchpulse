@@ -48,9 +48,9 @@ export default function AnalyzePage() {
         // Transcribe audio/video file
         const fileSizeMB = file.size / (1024 * 1024)
         
-        // Check file size - warn if over 25MB
-        if (fileSizeMB > 25) {
-          const proceed = confirm(`This file is ${fileSizeMB.toFixed(1)}MB. Large files may take longer to process. Continue?`)
+        // Check file size - warn if over 40MB
+        if (fileSizeMB > 40) {
+          const proceed = confirm(`This file is ${fileSizeMB.toFixed(1)}MB. Files over 45MB cannot be processed due to platform limits. Continue?`)
           if (!proceed) {
             setLoading(false)
             return
